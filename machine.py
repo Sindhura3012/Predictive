@@ -1,131 +1,186 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import matplotlib.pyplot as plt
 
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import accuracy_score, classification_report
+from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
+from sklearn.metrics import accuracy_score
 
-# -----------------------------
-# Page config
-# -----------------------------
-st.set_page_config(page_title="Predictive Maintenance", layout="centered")
+# -------------------------------
+# PAGE CONFIG
+# -------------------------------
+st.set_page_config(
+    page_title="Predictive Maintenance System",
+    layout="wide"
+)
 
 st.title("🔧 Predictive Maintenance for Industrial Machinery")
-st.write("Machine Failure Prediction using Machine Learning")
 
-# -----------------------------
-# Load dataset
-# -----------------------------
+# -------------------------------
+# LOAD DATA
+# -------------------------------
 @st.cache_data
 def load_data():
-    df = pd.read_csv("ai4i2020.csv")
-    return df
+    return pd.read_csv("ai4i2020.csv")
 
 df = load_data()
 
-# -----------------------------
-# Feature selection
-# -----------------------------
-features = [
-    'Air temperature [K]',
-    'Process temperature [K]',
-    'Rotational speed [rpm]',
-    'Torque [Nm]',
-    'Tool wear [min]'
-]
+# -------------------------------
+# TARGET DETECTION
+# -------------------------------
+failure_candidates = ["Machine failure", "Failure", "Target", "Label"]
+rul_candidates = ["RUL", "Remaining Useful Life"]
 
-target = 'Machine failure'
+failure_col = next((c for c in failure_candidates if c in df.columns), None)
+rul_col = next((c for c in rul_candidates if c in df.columns), None)
 
-X = df[features]
-y = df[target]
+# -------------------------------
+# FEATURE SELECTION
+# -------------------------------
+numeric_df = df.select_dtypes(include=[np.number])
 
-# -----------------------------
-# Train-test split
-# -----------------------------
+drop_cols = []
+if failure_col:
+    drop_cols.append(failure_col)
+if rul_col:
+    drop_cols.append(rul_col)
+
+X = numeric_df.drop(columns=drop_cols, errors="ignore")
+X = X.fillna(X.median())
+
+# -------------------------------
+# ADD OPERATING TIME
+# -------------------------------
+if "Operating_Time" not in X.columns:
+    X["Operating_Time"] = np.arange(len(X))
+    df["Operating_Time"] = X["Operating_Time"]
+
+# -------------------------------
+# FAILURE MODEL
+# -------------------------------
+rf_clf = None
+if failure_col:
+    y_fail = df[failure_col]
+
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y_fail, test_size=0.2, random_state=42, stratify=y_fail
+    )
+
+    rf_clf = RandomForestClassifier(
+        n_estimators=200,
+        random_state=42
+    )
+    rf_clf.fit(X_train, y_train)
+
+# -------------------------------
+# RUL GENERATION
+# -------------------------------
+if rul_col is None:
+    df["RUL"] = df["Operating_Time"].max() - df["Operating_Time"]
+    rul_col = "RUL"
+
+# -------------------------------
+# RUL MODEL
+# -------------------------------
+y_rul = df[rul_col]
+
 X_train, X_test, y_train, y_test = train_test_split(
-    X, y, test_size=0.2, random_state=42, stratify=y
+    X, y_rul, test_size=0.2, random_state=42
 )
 
-# -----------------------------
-# Scaling
-# -----------------------------
-scaler = StandardScaler()
-X_train_scaled = scaler.fit_transform(X_train)
-X_test_scaled = scaler.transform(X_test)
-
-# -----------------------------
-# Model
-# -----------------------------
-model = RandomForestClassifier(
+rf_reg = RandomForestRegressor(
     n_estimators=200,
-    random_state=42,
-    class_weight="balanced"
+    random_state=42
 )
+rf_reg.fit(X_train, y_train)
 
-model.fit(X_train_scaled, y_train)
+# -------------------------------
+# INPUT SAFETY
+# -------------------------------
+def clip_input(val, col):
+    min_v = df[col].quantile(0.01)
+    max_v = df[col].quantile(0.99)
+    exceeded = val < min_v or val > max_v
+    return np.clip(val, min_v, max_v), exceeded
 
-# -----------------------------
-# Model evaluation
-# -----------------------------
-y_pred = model.predict(X_test_scaled)
-accuracy = accuracy_score(y_test, y_pred)
+def build_input(user_inputs):
+    row = {}
+    warnings = []
 
-st.subheader("📊 Model Performance")
-st.write(f"**Accuracy:** {accuracy:.4f}")
+    for col in X.columns:
+        if col in user_inputs:
+            val, exceeded = clip_input(user_inputs[col], col)
+            row[col] = val
+            if exceeded:
+                warnings.append(col)
+        else:
+            row[col] = df[col].median()
 
-# -----------------------------
-# User Input
-# -----------------------------
-st.subheader("🧮 Enter Machine Sensor Values")
+    return pd.DataFrame([row]), warnings
 
-air_temp = st.number_input("Air Temperature (K)", min_value=200.0, max_value=400.0, value=300.0)
-process_temp = st.number_input("Process Temperature (K)", min_value=200.0, max_value=450.0, value=310.0)
-rpm = st.number_input("Rotational Speed (rpm)", min_value=0.0, max_value=5000.0, value=1500.0)
-torque = st.number_input("Torque (Nm)", min_value=0.0, max_value=200.0, value=40.0)
-tool_wear = st.number_input("Tool Wear (min)", min_value=0.0, max_value=300.0, value=100.0)
+# -------------------------------
+# USER INPUT
+# -------------------------------
+st.sidebar.header("Machine Input Parameters")
 
-input_data = np.array([[air_temp, process_temp, rpm, torque, tool_wear]])
-input_scaled = scaler.transform(input_data)
+user_inputs = {}
+for col in X.columns:
+    user_inputs[col] = st.sidebar.number_input(
+        col,
+        value=float(df[col].median())
+    )
 
-# -----------------------------
-# Range warning
-# -----------------------------
-for i, col in enumerate(features):
-    min_val = X[col].min()
-    max_val = X[col].max()
-    if input_data[0][i] < min_val or input_data[0][i] > max_val:
-        st.warning(f"⚠️ {col} is outside training range")
+# -------------------------------
+# PREDICTION
+# -------------------------------
+if st.sidebar.button("Predict Machine Health"):
 
-# -----------------------------
-# Prediction
-# -----------------------------
-if st.button("🔍 Predict Machine Failure"):
-    prediction = model.predict(input_scaled)[0]
-    probability = model.predict_proba(input_scaled)[0][1]
+    input_df, warn_cols = build_input(user_inputs)
 
-    if prediction == 1:
-        st.error(f"❌ Machine Failure Predicted")
+    failure_prob = None
+    if rf_clf:
+        failure_prob = rf_clf.predict_proba(input_df)[0][1]
+
+    rul_pred = rf_reg.predict(input_df)[0]
+    rul_minutes = max(rul_pred, 0)
+
+    if failure_prob is not None:
+        if failure_prob >= 0.7 or rul_minutes < 30:
+            status = "🔴 HIGH RISK"
+        elif failure_prob >= 0.4 or rul_minutes < 100:
+            status = "🟠 MEDIUM RISK"
+        else:
+            status = "🟢 SAFE"
     else:
-        st.success(f"✅ No Failure Predicted")
+        status = "🟢 SAFE"
 
-    st.write(f"**Failure Probability:** {probability:.2%}")
+    st.subheader("Prediction Results")
 
-# -----------------------------
-# Feature importance
-# -----------------------------
-st.subheader("📌 Feature Importance")
+    if failure_prob is not None:
+        st.metric("Failure Probability", f"{failure_prob:.2f}")
 
-importance_df = pd.DataFrame({
-    "Feature": features,
-    "Importance": model.feature_importances_
-}).sort_values(by="Importance", ascending=False)
+    st.metric("Predicted RUL", f"{rul_minutes:.2f} minutes")
+    st.markdown(f"### Machine Status: {status}")
 
-st.bar_chart(importance_df.set_index("Feature"))
+    if warn_cols:
+        st.warning(
+            f"Input exceeds training range for: {', '.join(warn_cols)}. "
+            "Values were safely adjusted."
+        )
 
-# -----------------------------
-# Footer
-# -----------------------------
-st.markdown("---")
-st.caption("Predictive Maintenance | Machine Learning | Streamlit App")
+    st.subheader("Feature Importance (RUL Model)")
+
+    fig, ax = plt.subplots()
+    imp = rf_reg.feature_importances_
+
+    imp_df = pd.DataFrame({
+        "Feature": X.columns,
+        "Importance": imp
+    }).sort_values(by="Importance")
+
+    ax.barh(imp_df["Feature"], imp_df["Importance"])
+    ax.set_xlabel("Importance")
+    ax.set_title("Feature Importance")
+    st.pyplot(fig)
