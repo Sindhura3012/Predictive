@@ -26,20 +26,16 @@ df = load_data()
 # TARGET DETECTION
 # --------------------------------------------------
 failure_col = "Machine failure" if "Machine failure" in df.columns else None
-rul_col = "RUL" if "RUL" in df.columns else None
 
 numeric_df = df.select_dtypes(include=np.number)
-
-X = numeric_df.drop(columns=[c for c in [failure_col, rul_col] if c], errors="ignore")
+X = numeric_df.drop(columns=[failure_col], errors="ignore")
 X = X.fillna(X.median())
 
 # --------------------------------------------------
-# CREATE RUL IF NOT PRESENT
+# CREATE RUL
 # --------------------------------------------------
-if rul_col is None:
-    df["Operating_Time"] = np.arange(len(df))
-    df["RUL"] = df["Operating_Time"].max() - df["Operating_Time"]
-    rul_col = "RUL"
+df["Operating_Time"] = np.arange(len(df))
+df["RUL"] = df["Operating_Time"].max() - df["Operating_Time"]
 
 # --------------------------------------------------
 # TRAIN MODELS
@@ -52,75 +48,80 @@ if failure_col:
 else:
     clf = None
 
-y_rul = df[rul_col]
+y_rul = df["RUL"]
 Xtr, Xte, ytr, yte = train_test_split(X, y_rul, test_size=0.2, random_state=42)
 reg = RandomForestRegressor(n_estimators=200, random_state=42)
 reg.fit(Xtr, ytr)
 
 # --------------------------------------------------
-# INPUT RANGE CHECK
-# --------------------------------------------------
-def validate_inputs(val, col):
-    lo, hi = df[col].min(), df[col].max()
-    return lo <= val <= hi
-
-# --------------------------------------------------
-# SIDEBAR FORM (NO BLUR)
-# --------------------------------------------------
-st.sidebar.header("⚙ Machine Parameters")
-
-with st.sidebar.form("prediction_form"):
-    user_inputs = {}
-    warnings = []
-
-    for col in X.columns:
-        val = st.number_input(col, value=float(df[col].median()))
-        user_inputs[col] = val
-        if not validate_inputs(val, col):
-            warnings.append(col)
-
-    submit = st.form_submit_button("🚀 Predict Machine Health")
-
-# --------------------------------------------------
-# MAIN OUTPUT
+# MAIN TABS
 # --------------------------------------------------
 tab1, tab2 = st.tabs(["📊 Prediction", "📈 Feature Importance"])
 
+# ==================================================
+# TAB 1 : INPUT + OUTPUT (MAIN SCREEN)
+# ==================================================
 with tab1:
-    if submit:
+
+    st.subheader("🧮 Enter Machine Sensor Values")
+
+    with st.form("main_input_form"):
+        col1, col2, col3 = st.columns(3)
+        user_inputs = {}
+
+        cols = list(X.columns)
+
+        for i, feature in enumerate(cols):
+            if i % 3 == 0:
+                user_inputs[feature] = col1.number_input(
+                    feature, value=float(df[feature].median())
+                )
+            elif i % 3 == 1:
+                user_inputs[feature] = col2.number_input(
+                    feature, value=float(df[feature].median())
+                )
+            else:
+                user_inputs[feature] = col3.number_input(
+                    feature, value=float(df[feature].median())
+                )
+
+        predict_btn = st.form_submit_button("🚀 Predict Machine Health")
+
+    # --------------------------------------------------
+    # PREDICTION OUTPUT
+    # --------------------------------------------------
+    if predict_btn:
         input_df = pd.DataFrame([user_inputs])
 
         failure_prob = clf.predict_proba(input_df)[0][1] if clf else 0
         rul_pred = max(reg.predict(input_df)[0], 0)
 
         if failure_prob > 0.7 or rul_pred < 30:
-            status, color = "HIGH RISK", "🔴"
+            status = "🔴 HIGH RISK"
         elif failure_prob > 0.4 or rul_pred < 100:
-            status, color = "MEDIUM RISK", "🟠"
+            status = "🟠 MEDIUM RISK"
         else:
-            status, color = "SAFE", "🟢"
+            status = "🟢 SAFE"
 
+        st.markdown("---")
         c1, c2, c3 = st.columns(3)
         c1.metric("Failure Probability", f"{failure_prob:.2f}")
-        c2.metric("Predicted RUL", f"{rul_pred:.1f} minutes")
-        c3.metric("Machine Status", f"{color} {status}")
+        c2.metric("Remaining Useful Life", f"{rul_pred:.1f} minutes")
+        c3.metric("Machine Status", status)
 
-        if warnings:
-            st.warning(
-                "⚠ Input exceeds training range for: "
-                + ", ".join(warnings)
-            )
-
-# --------------------------------------------------
-# FEATURE IMPORTANCE
-# --------------------------------------------------
+# ==================================================
+# TAB 2 : FEATURE IMPORTANCE
+# ==================================================
 with tab2:
-    st.subheader("Feature Importance (RUL Model)")
-    imp = pd.DataFrame({
+    st.subheader("📈 Feature Importance (RUL Model)")
+
+    imp_df = pd.DataFrame({
         "Feature": X.columns,
         "Importance": reg.feature_importances_
     }).sort_values("Importance")
 
-    fig, ax = plt.subplots()
-    ax.barh(imp["Feature"], imp["Importance"])
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ax.barh(imp_df["Feature"], imp_df["Importance"])
+    ax.set_xlabel("Importance Score")
+    ax.set_title("Key Factors Affecting RUL")
     st.pyplot(fig)
