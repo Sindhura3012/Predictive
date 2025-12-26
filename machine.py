@@ -118,20 +118,3 @@ with tab1:
         )
         c3.metric("Machine Status", status)
 
-# ======================================================
-# TAB 2 — FEATURE IMPORTANCE
-# ======================================================
-with tab2:
-
-    st.subheader("📈 Feature Importance (RUL Model)")
-
-    imp_df = pd.DataFrame({
-        "Feature": X.columns,
-        "Importance": reg.feature_importances_
-    }).sort_values(by="Importance")
-
-    fig, ax = plt.subplots(figsize=(8, 5))
-    ax.barh(imp_df["Feature"], imp_df["Importance"])
-    ax.set_xlabel("Importance Score")
-    ax.set_title("Key Factors Affecting RUL")
-    st.pyplot(fig)
