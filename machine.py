@@ -76,26 +76,15 @@ if st.button("🚀 Predict Machine Health"):
     minutes = rul_minutes % 60
 
     # ---------------- RESULTS ----------------
-    st.subheader("🔍 Prediction Results")
+    st.header("🔍 Prediction Results")
 
-    if prediction == 1:
-        st.error(f"⚠️ Machine Failure Predicted")
-    else:
-        st.success("✅ Machine is Operating Normally")
+if prediction == 1:
+    st.error("⚠️ Machine Failure Predicted")
+else:
+    st.success("✅ Machine is Operating Normally")
 
-    st.metric("Failure Probability", f"{probability:.2f} %")
-    st.metric("Remaining Useful Life (RUL)",
-              f"{days} days {hours} hours {minutes} minutes")
+st.header("📌 Failure Probability")
+st.metric("", f"{probability:.2f} %")
 
-    # ---------------- FEATURE IMPORTANCE ----------------
-    st.subheader("📊 Feature Importance")
-
-    importance = clf.feature_importances_
-    features = X_cls.columns
-
-    fig, ax = plt.subplots()
-    ax.barh(features, importance)
-    ax.set_xlabel("Importance Score")
-    ax.set_title("Feature Importance Based on User Input")
-
-    st.pyplot(fig)
+st.header("⏳ Remaining Useful Life (RUL)")
+st.metric("", f"{days} days {hours} hours {minutes} minutes")
