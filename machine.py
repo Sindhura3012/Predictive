@@ -50,11 +50,10 @@ if st.button("🚀 Predict Machine Health"):
         "TWF", "HDF", "PWF", "OSF", "RNF"
     ]
 
-    # --------- TRAIN DUMMY MODELS (NO FILE ERROR) ---------
+    # -------- MODELS (SAFE DUMMY TRAINING) --------
     clf = RandomForestClassifier(n_estimators=100, random_state=42)
     reg = RandomForestRegressor(n_estimators=100, random_state=42)
 
-    # Fake training data (only to avoid errors)
     X_train = np.random.rand(200, 11)
     y_class = np.random.randint(0, 2, 200)
     y_rul = np.random.randint(1000, 10000, 200)
@@ -62,24 +61,30 @@ if st.button("🚀 Predict Machine Health"):
     clf.fit(X_train, y_class)
     reg.fit(X_train, y_rul)
 
-    # --------- PREDICTION (FIXED) ---------
-    prediction = clf.predict(X)[0]
+    # -------- PREDICTIONS --------
     probability = clf.predict_proba(X)[0][1] * 100
     rul_minutes = int(reg.predict(X)[0])
 
-    # --------- RUL CONVERSION ---------
+    # -------- RUL CONVERSION --------
     days = rul_minutes // (24 * 60)
     hours = (rul_minutes % (24 * 60)) // 60
     minutes = rul_minutes % 60
 
+    # -------- RISK LEVEL LOGIC --------
+    if probability >= 70 or rul_minutes <= 2000:
+        risk = "HIGH RISK"
+        color = "🔴"
+    elif probability >= 30 or rul_minutes <= 5000:
+        risk = "MEDIUM RISK"
+        color = "🟠"
+    else:
+        risk = "SAFE"
+        color = "🟢"
+
     # ---------------- RESULTS ----------------
     st.divider()
     st.header("🔍 Prediction Results")
-
-    if prediction == 1:
-        st.error("⚠️ Machine Failure Predicted")
-    else:
-        st.success("✅ Machine is Operating Normally")
+    st.subheader(f"{color} Machine Status: **{risk}**")
 
     st.header("📌 Failure Probability")
     st.metric("", f"{probability:.2f} %")
