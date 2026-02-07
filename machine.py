@@ -1,153 +1,60 @@
 import streamlit as st
-import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
-from sklearn.model_selection import train_test_split
-from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
+import joblib
 
-# ======================================================
-# PAGE CONFIG
-# ======================================================
-st.set_page_config(page_title="Predictive Maintenance", layout="wide")
+# Load trained models
+clf = joblib.load("failure_model.pkl")
+reg = joblib.load("rul_model.pkl")
+scaler = joblib.load("scaler.pkl")
 
-st.title("🔧 Predictive Maintenance for Industrial Machinery")
-st.caption("Failure Prediction • RUL Estimation • Risk Assessment")
+# Utility functions
+def prob_to_percentage(prob):
+    return round(prob * 100, 2)
 
-# ======================================================
-# LOAD DATA
-# ======================================================
-@st.cache_data
-def load_data():
-    return pd.read_csv("ai4i2020.csv")
-
-df = load_data()
-
-# ======================================================
-# TARGET DETECTION
-# ======================================================
-failure_col = "Machine failure" if "Machine failure" in df.columns else None
-
-numeric_df = df.select_dtypes(include=np.number)
-X = numeric_df.drop(columns=[failure_col], errors="ignore")
-X = X.fillna(X.median())
-
-# ======================================================
-# CREATE RUL (IN MINUTES)
-# ======================================================
-df["Operating_Time"] = np.arange(len(df))
-df["RUL"] = df["Operating_Time"].max() - df["Operating_Time"]
-
-# ======================================================
-# TRAIN MODELS
-# ======================================================
-if failure_col:
-    y_fail = df[failure_col]
-    Xtr, Xte, ytr, yte = train_test_split(
-        X, y_fail, test_size=0.2, random_state=42
-    )
-    clf = RandomForestClassifier(n_estimators=200, random_state=42)
-    clf.fit(Xtr, ytr)
-else:
-    clf = None
-
-y_rul = df["RUL"]
-Xtr, Xte, ytr, yte = train_test_split(
-    X, y_rul, test_size=0.2, random_state=42
-)
-reg = RandomForestRegressor(n_estimators=200, random_state=42)
-reg.fit(Xtr, ytr)
-
-# ======================================================
-# RUL CONVERSION FUNCTION
-# ======================================================
 def format_rul(minutes):
     minutes = int(minutes)
-
     days = minutes // (24 * 60)
     hours = (minutes % (24 * 60)) // 60
     mins = minutes % 60
+    return f"{days} days {hours} hours {mins} minutes"
 
-    parts = []
-    if days > 0:
-        parts.append(f"{days} day{'s' if days > 1 else ''}")
-    if hours > 0:
-        parts.append(f"{hours} hour{'s' if hours > 1 else ''}")
-    parts.append(f"{mins} minute{'s' if mins > 1 else ''}")
+st.title("🛠 Predictive Maintenance System")
 
-    return " ".join(parts)
+st.subheader("Enter Machine Sensor Values")
 
-# ======================================================
-# MAIN TABS
-# ======================================================
-tab1, tab2 = st.tabs(["📊 Prediction", "📈 Feature Importance"])
+# ---- SENSOR FULL FORMS ----
+UDI = st.number_input("UDI – Unique Device Identifier", value=5000.0)
+air_temp = st.number_input("Air Temperature [K]", value=300.0)
+process_temp = st.number_input("Process Temperature [K]", value=310.0)
+rpm = st.number_input("Rotational Speed [rpm]", value=1500.0)
+torque = st.number_input("Torque [Nm]", value=40.0)
+tool_wear = st.number_input("Tool Wear [minutes]", value=100.0)
 
-# ======================================================
-# TAB 1 — INPUT + OUTPUT
-# ======================================================
-with tab1:
+TWF = st.number_input("TWF – Tool Wear Failure (0 or 1)", value=0.0)
+HDF = st.number_input("HDF – Heat Dissipation Failure (0 or 1)", value=0.0)
+PWF = st.number_input("PWF – Power Failure (0 or 1)", value=0.0)
+OSF = st.number_input("OSF – Overstrain Failure (0 or 1)", value=0.0)
+RNF = st.number_input("RNF – Random Failure (0 or 1)", value=0.0)
 
-    st.subheader("🧮 Enter Machine Sensor Values")
+if st.button("🚀 Predict Machine Health"):
 
-    with st.form("machine_input_form"):
-        col1, col2, col3 = st.columns(3)
-        user_inputs = {}
+    input_data = np.array([[UDI, air_temp, process_temp, rpm, torque,
+                             tool_wear, TWF, HDF, PWF, OSF, RNF]])
 
-        features = list(X.columns)
+    scaled_input = scaler.transform(input_data)
 
-        for i, feature in enumerate(features):
-            default = float(df[feature].median())
-            if i % 3 == 0:
-                user_inputs[feature] = col1.number_input(feature, value=default)
-            elif i % 3 == 1:
-                user_inputs[feature] = col2.number_input(feature, value=default)
-            else:
-                user_inputs[feature] = col3.number_input(feature, value=default)
+    # Predictions
+    failure_prob = clf.predict_proba(scaled_input)[0][1]
+    rul_minutes = reg.predict(input_data)[0]
 
-        submit = st.form_submit_button("🚀 Predict Machine Health")
+    st.success("Prediction Successful")
 
-    # ======================================================
-    # PREDICTION OUTPUT
-    # ======================================================
-    if submit:
-        input_df = pd.DataFrame([user_inputs])
+    st.metric(
+        label="Failure Probability",
+        value=f"{prob_to_percentage(failure_prob)} %"
+    )
 
-        # Failure probability (percentage)
-        failure_prob = clf.predict_proba(input_df)[0][1] if clf else 0
-        failure_percent = failure_prob * 100
-
-        # RUL prediction
-        rul_minutes = max(reg.predict(input_df)[0], 0)
-        rul_readable = format_rul(rul_minutes)
-
-        # Risk logic
-        if failure_percent > 70 or rul_minutes < 1440:
-            status = "🔴 HIGH RISK"
-        elif failure_percent > 40 or rul_minutes < 7200:
-            status = "🟠 MEDIUM RISK"
-        else:
-            status = "🟢 SAFE"
-
-        st.markdown("---")
-        c1, c2, c3 = st.columns(3)
-
-        c1.metric("Failure Probability", f"{failure_percent:.2f} %")
-        c2.metric("Remaining Useful Life", rul_readable)
-        c3.metric("Machine Status", status)
-
-# ======================================================
-# TAB 2 — FEATURE IMPORTANCE
-# ======================================================
-with tab2:
-
-    st.subheader("📈 Feature Importance (RUL Model)")
-
-    imp_df = pd.DataFrame({
-        "Feature": X.columns,
-        "Importance": reg.feature_importances_
-    }).sort_values(by="Importance")
-
-    fig, ax = plt.subplots(figsize=(8, 5))
-    ax.barh(imp_df["Feature"], imp_df["Importance"])
-    ax.set_xlabel("Importance Score")
-    ax.set_title("Key Factors Affecting RUL")
-    st.pyplot(fig)
+    st.metric(
+        label="Remaining Useful Life (RUL)",
+        value=format_rul(rul_minutes)
+    )
