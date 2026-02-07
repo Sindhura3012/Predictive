@@ -2,29 +2,11 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
+
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import StandardScaler
 
-# --------------------------------------------------
-# PAGE CONFIG
-# --------------------------------------------------
-st.set_page_config(page_title="Predictive Maintenance", layout="wide")
-
-st.title("🔧 Predictive Maintenance for Industrial Machinery")
-
-# --------------------------------------------------
-# RUL FORMATTER
-# --------------------------------------------------
-def format_rul(minutes):
-    minutes = int(max(minutes, 0))
-    days = minutes // (24 * 60)
-    hours = (minutes % (24 * 60)) // 60
-    mins = minutes % 60
-    return f"{days} days {hours} hours {mins} minutes"
-
-# --------------------------------------------------
-# LOAD & TRAIN (NO PKL FILES)
-# --------------------------------------------------
+# Load dataset
 df = pd.read_csv("ai4i2020.csv")
 df = df.drop(columns=["Product ID", "Type"])
 
@@ -34,67 +16,52 @@ y = df["Machine failure"]
 scaler = StandardScaler()
 X_scaled = scaler.fit_transform(X)
 
-clf = RandomForestClassifier(n_estimators=150, random_state=42)
-clf.fit(X_scaled, y)
+model = RandomForestClassifier(n_estimators=200, random_state=42)
+model.fit(X_scaled, y)
 
-reg = RandomForestRegressor(n_estimators=150, random_state=42)
-reg.fit(X, df["Tool wear [min]"])
+# App UI
+st.title("🔧 Predictive Maintenance for Industrial Machinery")
 
-# --------------------------------------------------
-# USER INPUT FORM (KEY FIX)
-# --------------------------------------------------
-st.subheader("Enter Machine Sensor Values")
+st.subheader("Enter Machine Sensor Values (with Full Forms)")
 
-with st.form("sensor_form"):
-    cols = st.columns(3)
-    user_values = []
+col1, col2, col3 = st.columns(3)
 
-    for i, col in enumerate(X.columns):
-        with cols[i % 3]:
-            val = st.number_input(
-                label=col,
-                value=float(X[col].mean()),
-                step=0.1
-            )
-            user_values.append(val)
+with col1:
+    udi = st.number_input("UDI – Unique Device Identifier", value=5000.0)
+    rot = st.number_input("Rotational Speed (rpm)", value=1500.0)
+    twf = st.number_input("TWF – Tool Wear Failure (0 or 1)", value=0.0)
+    osf = st.number_input("OSF – Overstrain Failure (0 or 1)", value=0.0)
 
-    submit = st.form_submit_button("🚀 Predict Machine Health")
+with col2:
+    air = st.number_input("Air Temperature (Kelvin)", value=300.0)
+    torque = st.number_input("Torque (Nm)", value=40.0)
+    hdf = st.number_input("HDF – Heat Dissipation Failure (0 or 1)", value=0.0)
+    rnf = st.number_input("RNF – Random Failure (0 or 1)", value=0.0)
 
-# --------------------------------------------------
-# RUN PREDICTION ONLY AFTER SUBMIT
-# --------------------------------------------------
-if submit:
-    user_input = np.array(user_values).reshape(1, -1)
-    user_scaled = scaler.transform(user_input)
+with col3:
+    process = st.number_input("Process Temperature (Kelvin)", value=310.0)
+    wear = st.number_input("Tool Wear Time (minutes)", value=100.0)
+    pwf = st.number_input("PWF – Power Failure (0 or 1)", value=0.0)
 
-    failure_prob = clf.predict_proba(user_scaled)[0][1] * 100
-    rul_minutes = reg.predict(user_input)[0]
+if st.button("🚀 Predict Machine Health"):
 
-    # USER-BASED FEATURE IMPORTANCE
-    global_importance = clf.feature_importances_
-    normalized_input = np.abs(user_input[0]) / (np.sum(np.abs(user_input[0])) + 1e-6)
-    user_importance = global_importance * normalized_input
+    user_data = pd.DataFrame([[
+        udi, air, process, rot, torque, wear,
+        twf, hdf, pwf, osf, rnf
+    ]], columns=X.columns)
 
-    st.markdown("---")
-    st.subheader("Prediction Results")
+    user_scaled = scaler.transform(user_data)
+    prediction = model.predict(user_scaled)
 
-    c1, c2 = st.columns(2)
-    c1.metric("Failure Probability", f"{failure_prob:.2f}%")
-    c2.metric("Remaining Useful Life", format_rul(rul_minutes))
-
-    if failure_prob < 30:
-        st.success("Machine Status: SAFE")
-    elif failure_prob < 70:
-        st.warning("Machine Status: WARNING")
+    if prediction[0] == 1:
+        st.error("⚠️ Machine is likely to FAIL")
     else:
-        st.error("Machine Status: HIGH RISK")
+        st.success("✅ Machine is HEALTHY")
 
-    # --------------------------------------------------
-    # FEATURE IMPORTANCE
-    # --------------------------------------------------
-    st.subheader("Feature Importance (Based on User Input)")
+    # Feature Importance
+    importance = model.feature_importances_
 
-    fig, ax = plt.subplots(figsize=(10, 5))
-    ax.barh(X.columns, user_importance)
-    ax.set_xlabel("User-specific Importance Score")
+    fig, ax = plt.subplots(figsize=(8,4))
+    ax.barh(X.columns, importance)
+    ax.set_title("Feature Importance Based on User Input")
     st.pyplot(fig)
