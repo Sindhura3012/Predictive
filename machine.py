@@ -3,29 +3,37 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from sklearn.preprocessing import StandardScaler
 
-# -------------------- PAGE CONFIG --------------------
+# ---------------- PAGE CONFIG ----------------
 st.set_page_config(page_title="Predictive Maintenance", layout="wide")
 
 st.title("🔧 Predictive Maintenance for Industrial Machinery")
 st.subheader("Enter Machine Sensor Values")
 
-# -------------------- LOAD DATA --------------------
+# ---------------- LOAD DATA ----------------
 df = pd.read_csv("ai4i2020.csv")
 df = df.drop(columns=["Product ID", "Type"])
 
-X = df.drop(columns=["Machine failure"])
-y = df["Machine failure"]
+# Classification (Failure)
+X_cls = df.drop(columns=["Machine failure"])
+y_cls = df["Machine failure"]
+
+# Regression (RUL approximation using tool wear)
+X_rul = X_cls
+y_rul = 10000 - df["Tool wear [min]"]  # Synthetic RUL target
 
 scaler = StandardScaler()
-X_scaled = scaler.fit_transform(X)
+X_scaled = scaler.fit_transform(X_cls)
 
-model = RandomForestClassifier(n_estimators=100, random_state=42)
-model.fit(X_scaled, y)
+clf = RandomForestClassifier(n_estimators=150, random_state=42)
+clf.fit(X_scaled, y_cls)
 
-# -------------------- INPUT SECTION --------------------
+rul_model = RandomForestRegressor(n_estimators=150, random_state=42)
+rul_model.fit(X_scaled, y_rul)
+
+# ---------------- INPUT UI ----------------
 col1, col2, col3 = st.columns(3)
 
 with col1:
@@ -46,29 +54,48 @@ with col3:
 osf = st.number_input("Overstrain Failure (OSF)", min_value=0.0, max_value=1.0, value=0.0)
 rnf = st.number_input("Random Failure (RNF)", min_value=0.0, max_value=1.0, value=0.0)
 
-# -------------------- PREDICTION --------------------
+# ---------------- PREDICTION ----------------
 if st.button("🚀 Predict Machine Health"):
 
     user_input = np.array([[udi, air_temp, process_temp, rot_speed,
                              torque, tool_wear, twf, hdf, pwf, osf, rnf]])
 
-    user_input_scaled = scaler.transform(user_input)
-    prediction = model.predict(user_input_scaled)[0]
+    user_scaled = scaler.transform(user_input)
+
+    # Failure prediction
+    prediction = clf.predict(user_scaled)[0]
+    probability = clf.predict_proba(user_scaled)[0][1] * 100
+
+    # RUL prediction (minutes)
+    rul_minutes = int(rul_model.predict(user_scaled)[0])
+    rul_minutes = max(rul_minutes, 0)
+
+    # Convert RUL
+    days = rul_minutes // 1440
+    hours = (rul_minutes % 1440) // 60
+    minutes = rul_minutes % 60
+
+    # ---------------- RESULTS ----------------
+    st.subheader("🔍 Prediction Results")
 
     if prediction == 1:
-        st.error("⚠️ Machine Failure Predicted")
+        st.error(f"⚠️ Machine Failure Predicted")
     else:
         st.success("✅ Machine is Operating Normally")
 
-    # -------------------- FEATURE IMPORTANCE --------------------
-    st.subheader("Feature Importance Based on User Input")
+    st.metric("Failure Probability", f"{probability:.2f} %")
+    st.metric("Remaining Useful Life (RUL)",
+              f"{days} days {hours} hours {minutes} minutes")
 
-    importance = model.feature_importances_
-    features = X.columns
+    # ---------------- FEATURE IMPORTANCE ----------------
+    st.subheader("📊 Feature Importance")
+
+    importance = clf.feature_importances_
+    features = X_cls.columns
 
     fig, ax = plt.subplots()
     ax.barh(features, importance)
     ax.set_xlabel("Importance Score")
-    ax.set_title("Feature Importance")
+    ax.set_title("Feature Importance Based on User Input")
 
     st.pyplot(fig)
