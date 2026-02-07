@@ -28,12 +28,11 @@ df = load_data()
 failure_col = "Machine failure" if "Machine failure" in df.columns else None
 
 numeric_df = df.select_dtypes(include=np.number)
-
 X = numeric_df.drop(columns=[failure_col], errors="ignore")
 X = X.fillna(X.median())
 
 # ======================================================
-# CREATE RUL (Minutes → later converted to hours)
+# CREATE RUL (IN MINUTES)
 # ======================================================
 df["Operating_Time"] = np.arange(len(df))
 df["RUL"] = df["Operating_Time"].max() - df["Operating_Time"]
@@ -57,6 +56,25 @@ Xtr, Xte, ytr, yte = train_test_split(
 )
 reg = RandomForestRegressor(n_estimators=200, random_state=42)
 reg.fit(Xtr, ytr)
+
+# ======================================================
+# RUL CONVERSION FUNCTION
+# ======================================================
+def format_rul(minutes):
+    minutes = int(minutes)
+
+    days = minutes // (24 * 60)
+    hours = (minutes % (24 * 60)) // 60
+    mins = minutes % 60
+
+    parts = []
+    if days > 0:
+        parts.append(f"{days} day{'s' if days > 1 else ''}")
+    if hours > 0:
+        parts.append(f"{hours} hour{'s' if hours > 1 else ''}")
+    parts.append(f"{mins} minute{'s' if mins > 1 else ''}")
+
+    return " ".join(parts)
 
 # ======================================================
 # MAIN TABS
@@ -88,22 +106,23 @@ with tab1:
         submit = st.form_submit_button("🚀 Predict Machine Health")
 
     # ======================================================
-    # PREDICTION
+    # PREDICTION OUTPUT
     # ======================================================
     if submit:
         input_df = pd.DataFrame([user_inputs])
 
-        # Failure probability
+        # Failure probability (percentage)
         failure_prob = clf.predict_proba(input_df)[0][1] if clf else 0
+        failure_percent = failure_prob * 100
 
         # RUL prediction
         rul_minutes = max(reg.predict(input_df)[0], 0)
-        rul_hours = rul_minutes / 60
+        rul_readable = format_rul(rul_minutes)
 
         # Risk logic
-        if failure_prob > 0.7 or rul_hours < 1:
+        if failure_percent > 70 or rul_minutes < 1440:
             status = "🔴 HIGH RISK"
-        elif failure_prob > 0.4 or rul_hours < 5:
+        elif failure_percent > 40 or rul_minutes < 7200:
             status = "🟠 MEDIUM RISK"
         else:
             status = "🟢 SAFE"
@@ -111,10 +130,24 @@ with tab1:
         st.markdown("---")
         c1, c2, c3 = st.columns(3)
 
-        c1.metric("Failure Probability", f"{failure_prob:.2f}")
-        c2.metric(
-            "Remaining Useful Life",
-            f"{rul_hours:.2f} hours ({rul_minutes:.0f} min)"
-        )
+        c1.metric("Failure Probability", f"{failure_percent:.2f} %")
+        c2.metric("Remaining Useful Life", rul_readable)
         c3.metric("Machine Status", status)
 
+# ======================================================
+# TAB 2 — FEATURE IMPORTANCE
+# ======================================================
+with tab2:
+
+    st.subheader("📈 Feature Importance (RUL Model)")
+
+    imp_df = pd.DataFrame({
+        "Feature": X.columns,
+        "Importance": reg.feature_importances_
+    }).sort_values(by="Importance")
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ax.barh(imp_df["Feature"], imp_df["Importance"])
+    ax.set_xlabel("Importance Score")
+    ax.set_title("Key Factors Affecting RUL")
+    st.pyplot(fig)
