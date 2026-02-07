@@ -1,13 +1,11 @@
 import streamlit as st
+import pandas as pd
 import numpy as np
-import joblib
+from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
+from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import train_test_split
 
-# Load trained models
-clf = joblib.load("failure_model.pkl")
-reg = joblib.load("rul_model.pkl")
-scaler = joblib.load("scaler.pkl")
-
-# Utility functions
+# ------------------ Utility Functions ------------------
 def prob_to_percentage(prob):
     return round(prob * 100, 2)
 
@@ -18,11 +16,36 @@ def format_rul(minutes):
     mins = minutes % 60
     return f"{days} days {hours} hours {mins} minutes"
 
+# ------------------ Load & Train Model ------------------
+@st.cache_resource
+def train_models():
+    df = pd.read_csv("ai4i2020.csv")
+
+    df = df.drop(columns=["Product ID", "Type"])
+
+    X = df.drop(columns=["Machine failure"])
+    y = df["Machine failure"]
+
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
+
+    clf = RandomForestClassifier(n_estimators=100, random_state=42)
+    clf.fit(X_scaled, y)
+
+    # RUL model (using Tool wear as proxy)
+    rul_target = df["Tool wear [min]"]
+    reg = RandomForestRegressor(n_estimators=100, random_state=42)
+    reg.fit(X, rul_target)
+
+    return clf, reg, scaler
+
+clf, reg, scaler = train_models()
+
+# ------------------ UI ------------------
 st.title("🛠 Predictive Maintenance System")
 
 st.subheader("Enter Machine Sensor Values")
 
-# ---- SENSOR FULL FORMS ----
 UDI = st.number_input("UDI – Unique Device Identifier", value=5000.0)
 air_temp = st.number_input("Air Temperature [K]", value=300.0)
 process_temp = st.number_input("Process Temperature [K]", value=310.0)
@@ -43,7 +66,6 @@ if st.button("🚀 Predict Machine Health"):
 
     scaled_input = scaler.transform(input_data)
 
-    # Predictions
     failure_prob = clf.predict_proba(scaled_input)[0][1]
     rul_minutes = reg.predict(input_data)[0]
 
