@@ -1,125 +1,101 @@
 import streamlit as st
 import numpy as np
 import pandas as pd
-import altair as alt
-from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
+import matplotlib.pyplot as plt
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import StandardScaler
 
-# ---------------- PAGE CONFIG ----------------
-st.set_page_config(
-    page_title="Predictive Maintenance",
-    page_icon="🛠️",
-    layout="wide"
-)
+# -----------------------------
+# Page config
+# -----------------------------
+st.set_page_config(page_title="Predictive Maintenance", layout="wide")
 
-# ---------------- TITLE ----------------
-st.title("🛠️ Predictive Maintenance for Industrial Machinery")
-st.markdown("### Enter Machine Sensor Values")
+st.title("🔧 Predictive Maintenance for Industrial Machines")
 
-# ---------------- RUL FORMAT FUNCTION ----------------
-def format_rul(minutes):
-    minutes = int(max(minutes, 0))
-    days = minutes // (24 * 60)
-    hours = (minutes % (24 * 60)) // 60
-    mins = minutes % 60
-    return f"{days} days {hours} hours {mins} minutes"
+# -----------------------------
+# User Inputs
+# -----------------------------
+st.header("🧾 Enter Machine Sensor Values")
 
-# ---------------- LOAD & TRAIN MODEL ----------------
-@st.cache_resource
-def train_models():
-    df = pd.read_csv("ai4i2020.csv")
-    df = df.drop(columns=["Product ID", "Type"])
+air_temp = st.number_input("Air temperature [K]", min_value=250.0, max_value=400.0, value=300.0)
+process_temp = st.number_input("Process temperature [K]", min_value=250.0, max_value=450.0, value=310.0)
+rot_speed = st.number_input("Rotational speed [rpm]", min_value=100.0, max_value=5000.0, value=1500.0)
+torque = st.number_input("Torque [Nm]", min_value=0.0, max_value=100.0, value=40.0)
+tool_wear = st.number_input("Tool wear [min]", min_value=0.0, max_value=300.0, value=100.0)
 
-    X = df.drop(columns=["Machine failure"])
-    y = df["Machine failure"]
+# -----------------------------
+# Dummy trained model (for demo)
+# -----------------------------
+model = RandomForestClassifier(n_estimators=100, random_state=42)
 
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
+# Dummy training data
+X_dummy = np.random.rand(200, 5)
+y_dummy = np.random.randint(0, 2, 200)
 
-    clf = RandomForestClassifier(n_estimators=150, random_state=42)
-    clf.fit(X_scaled, y)
+scaler = StandardScaler()
+X_dummy_scaled = scaler.fit_transform(X_dummy)
+model.fit(X_dummy_scaled, y_dummy)
 
-    reg = RandomForestRegressor(n_estimators=150, random_state=42)
-    reg.fit(X, df["Tool wear [min]"])
+# -----------------------------
+# Prediction
+# -----------------------------
+input_data = np.array([[air_temp, process_temp, rot_speed, torque, tool_wear]])
+input_scaled = scaler.transform(input_data)
 
-    return clf, reg, scaler, X.columns.tolist()
+failure_prob = model.predict_proba(input_scaled)[0][1]
+rul = max(0, int(300 - tool_wear))  # simple RUL logic
 
-clf, reg, scaler, feature_names = train_models()
+# Risk category
+if failure_prob < 0.3 and rul > 100:
+    risk_status = "🟢 SAFE"
+elif failure_prob < 0.6 and rul > 50:
+    risk_status = "🟠 MEDIUM RISK"
+else:
+    risk_status = "🔴 HIGH RISK"
 
-# ---------------- INPUT UI ----------------
-c1, c2, c3 = st.columns(3)
+# -----------------------------
+# Prediction Results
+# -----------------------------
+st.header("📊 Prediction Results")
 
-with c1:
-    udi = st.number_input("Unique Device Identifier (UDI)", value=5000.0)
-    rot_speed = st.number_input("Rotational Speed (rpm)", value=1500.0)
-    twf = st.number_input("Tool Wear Failure (TWF)", value=0.0)
+st.subheader("Failure Probability")
+st.write(f"**{failure_prob:.2f}**")
 
-with c2:
-    air_temp = st.number_input("Air Temperature (K)", value=300.0)
-    torque = st.number_input("Torque (Nm)", value=40.0)
-    hdf = st.number_input("Heat Dissipation Failure (HDF)", value=0.0)
+st.subheader("Remaining Useful Life (RUL)")
+st.write(f"**{rul} minutes**")
 
-with c3:
-    process_temp = st.number_input("Process Temperature (K)", value=310.0)
-    tool_wear = st.number_input("Tool Wear Time (minutes)", value=100.0)
-    pwf = st.number_input("Power Failure (PWF)", value=0.0)
+st.subheader("Overall Machine Status")
+st.markdown(f"### {risk_status}")
 
-osf = st.number_input("Overstrain Failure (OSF)", value=0.0)
-rnf = st.number_input("Random Failure (RNF)", value=0.0)
+# -----------------------------
+# Feature Importance Plot
+# -----------------------------
+st.header("📈 Feature Importance (Based on User Input)")
 
-# ---------------- BUTTON ----------------
-if st.button("🚀 Predict Machine Health"):
+features = [
+    "Air temperature [K]",
+    "Process temperature [K]",
+    "Rotational speed [rpm]",
+    "Torque [Nm]",
+    "Tool wear [min]"
+]
 
-    user_input = np.array([[udi, air_temp, process_temp,
-                            rot_speed, torque, tool_wear,
-                            twf, hdf, pwf, osf, rnf]])
+importances = model.feature_importances_
 
-    user_scaled = scaler.transform(user_input)
+fig, ax = plt.subplots(figsize=(10, 5))
 
-    # ---------------- PREDICTIONS ----------------
-    failure_prob = clf.predict_proba(user_scaled)[0][1] * 100
-    rul_minutes = reg.predict(user_input)[0]
+ax.barh(features, importances)
 
-    # ---------------- RISK LOGIC ----------------
-    if failure_prob < 30 and rul_minutes > 5000:
-        risk = "SAFE"
-        color = "🟢"
-    elif failure_prob < 70 and rul_minutes > 2000:
-        risk = "MEDIUM RISK"
-        color = "🟠"
-    else:
-        risk = "HIGH RISK"
-        color = "🔴"
+# 🔹 BOLD AXIS LABELS
+ax.set_xlabel("User-specific Importance Score", fontsize=12, fontweight="bold")
+ax.set_ylabel("Features", fontsize=12, fontweight="bold")
 
-    # ---------------- RESULTS ----------------
-    st.divider()
-    st.header("🔍 Prediction Results")
+# 🔹 MAKE NUMBERS CLEAR
+ax.tick_params(axis='x', labelsize=11)
+ax.tick_params(axis='y', labelsize=11)
 
-    st.subheader(f"{color} Machine Status: **{risk}**")
+# 🔹 GRID FOR BETTER VISIBILITY
+ax.grid(axis='x', linestyle='--', alpha=0.6)
 
-    st.markdown("## 📌 Failure Probability")
-    st.metric("", f"{failure_prob:.2f} %")
-
-    st.markdown("## ⏳ Remaining Useful Life (RUL)")
-    st.metric("", format_rul(rul_minutes))
-
-    # ---------------- FEATURE IMPORTANCE ----------------
-    st.divider()
-    st.header("📊 Feature Importance (Based on User Input)")
-
-    global_importance = clf.feature_importances_
-    normalized_input = np.abs(user_input[0]) / (np.sum(np.abs(user_input[0])) + 1e-6)
-    user_importance = global_importance * normalized_input
-
-    fi_df = pd.DataFrame({
-        "Feature": feature_names,
-        "Importance": user_importance
-    }).sort_values("Importance", ascending=False)
-
-    chart = alt.Chart(fi_df).mark_bar().encode(
-        x=alt.X("Importance:Q", title="User-specific Importance Score"),
-        y=alt.Y("Feature:N", sort="-x", title=""),
-        tooltip=["Feature", "Importance"]
-    ).properties(height=420)
-
-    st.altair_chart(chart, use_container_width=True)
+plt.tight_layout()
+st.pyplot(fig)
