@@ -1,11 +1,7 @@
-# ============================================
-# Predictive Maintenance – Streamlit App
-# (Matplotlib-Free Version)
-# ============================================
-
 import streamlit as st
 import numpy as np
 import pandas as pd
+import altair as alt
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from sklearn.preprocessing import StandardScaler
 
@@ -20,7 +16,15 @@ st.set_page_config(
 st.title("🛠️ Predictive Maintenance for Industrial Machinery")
 st.markdown("### Enter Machine Sensor Values")
 
-# ---------------- LOAD & TRAIN MODELS ----------------
+# ---------------- RUL FORMAT FUNCTION ----------------
+def format_rul(minutes):
+    minutes = int(max(minutes, 0))
+    days = minutes // (24 * 60)
+    hours = (minutes % (24 * 60)) // 60
+    mins = minutes % 60
+    return f"{days} days {hours} hours {mins} minutes"
+
+# ---------------- LOAD & TRAIN MODEL ----------------
 @st.cache_resource
 def train_models():
     df = pd.read_csv("ai4i2020.csv")
@@ -38,60 +42,54 @@ def train_models():
     reg = RandomForestRegressor(n_estimators=150, random_state=42)
     reg.fit(X, df["Tool wear [min]"])
 
-    return clf, reg, scaler, X.columns
+    return clf, reg, scaler, X.columns.tolist()
 
 clf, reg, scaler, feature_names = train_models()
 
 # ---------------- INPUT UI ----------------
-col1, col2, col3 = st.columns(3)
+c1, c2, c3 = st.columns(3)
 
-with col1:
-    udi = st.number_input("Unique Device Identifier (UDI)", 0.0, 10000.0, 5000.0)
-    rot_speed = st.number_input("Rotational Speed (rpm)", 0.0, 5000.0, 1500.0)
-    twf = st.number_input("Tool Wear Failure (TWF)", 0.0, 1.0, 0.0)
+with c1:
+    udi = st.number_input("Unique Device Identifier (UDI)", value=5000.0)
+    rot_speed = st.number_input("Rotational Speed (rpm)", value=1500.0)
+    twf = st.number_input("Tool Wear Failure (TWF)", value=0.0)
 
-with col2:
-    air_temp = st.number_input("Air Temperature (K)", 250.0, 400.0, 300.0)
-    torque = st.number_input("Torque (Nm)", 0.0, 100.0, 40.0)
-    hdf = st.number_input("Heat Dissipation Failure (HDF)", 0.0, 1.0, 0.0)
+with c2:
+    air_temp = st.number_input("Air Temperature (K)", value=300.0)
+    torque = st.number_input("Torque (Nm)", value=40.0)
+    hdf = st.number_input("Heat Dissipation Failure (HDF)", value=0.0)
 
-with col3:
-    process_temp = st.number_input("Process Temperature (K)", 250.0, 400.0, 310.0)
-    tool_wear = st.number_input("Tool Wear Time (minutes)", 0.0, 300.0, 100.0)
-    pwf = st.number_input("Power Failure (PWF)", 0.0, 1.0, 0.0)
+with c3:
+    process_temp = st.number_input("Process Temperature (K)", value=310.0)
+    tool_wear = st.number_input("Tool Wear Time (minutes)", value=100.0)
+    pwf = st.number_input("Power Failure (PWF)", value=0.0)
 
-osf = st.number_input("Overstrain Failure (OSF)", 0.0, 1.0, 0.0)
-rnf = st.number_input("Random Failure (RNF)", 0.0, 1.0, 0.0)
+osf = st.number_input("Overstrain Failure (OSF)", value=0.0)
+rnf = st.number_input("Random Failure (RNF)", value=0.0)
 
 # ---------------- BUTTON ----------------
 if st.button("🚀 Predict Machine Health"):
 
-    # -------- INPUT VECTOR --------
     user_input = np.array([[udi, air_temp, process_temp,
                             rot_speed, torque, tool_wear,
                             twf, hdf, pwf, osf, rnf]])
 
     user_scaled = scaler.transform(user_input)
 
-    # -------- PREDICTIONS --------
+    # ---------------- PREDICTIONS ----------------
     failure_prob = clf.predict_proba(user_scaled)[0][1] * 100
-    rul_minutes = int(reg.predict(user_input)[0])
+    rul_minutes = reg.predict(user_input)[0]
 
-    # -------- RUL FORMAT --------
-    days = rul_minutes // (24 * 60)
-    hours = (rul_minutes % (24 * 60)) // 60
-    minutes = rul_minutes % 60
-
-    # -------- RISK LOGIC --------
-    if failure_prob >= 70 or rul_minutes <= 2000:
-        risk = "HIGH RISK"
-        color = "🔴"
-    elif failure_prob >= 30 or rul_minutes <= 5000:
+    # ---------------- RISK LOGIC ----------------
+    if failure_prob < 30 and rul_minutes > 5000:
+        risk = "SAFE"
+        color = "🟢"
+    elif failure_prob < 70 and rul_minutes > 2000:
         risk = "MEDIUM RISK"
         color = "🟠"
     else:
-        risk = "SAFE"
-        color = "🟢"
+        risk = "HIGH RISK"
+        color = "🔴"
 
     # ---------------- RESULTS ----------------
     st.divider()
@@ -99,15 +97,15 @@ if st.button("🚀 Predict Machine Health"):
 
     st.subheader(f"{color} Machine Status: **{risk}**")
 
-    st.header("📌 Failure Probability")
+    st.markdown("## 📌 Failure Probability")
     st.metric("", f"{failure_prob:.2f} %")
 
-    st.header("⏳ Remaining Useful Life (RUL)")
-    st.metric("", f"{days} days {hours} hours {minutes} minutes")
+    st.markdown("## ⏳ Remaining Useful Life (RUL)")
+    st.metric("", format_rul(rul_minutes))
 
     # ---------------- FEATURE IMPORTANCE ----------------
     st.divider()
-    st.header("📊 Feature Importance (Based on Your Inputs)")
+    st.header("📊 Feature Importance (Based on User Input)")
 
     global_importance = clf.feature_importances_
     normalized_input = np.abs(user_input[0]) / (np.sum(np.abs(user_input[0])) + 1e-6)
@@ -116,6 +114,12 @@ if st.button("🚀 Predict Machine Health"):
     fi_df = pd.DataFrame({
         "Feature": feature_names,
         "Importance": user_importance
-    }).sort_values(by="Importance", ascending=False)
+    }).sort_values("Importance", ascending=False)
 
-    st.bar_chart(fi_df.set_index("Feature"))
+    chart = alt.Chart(fi_df).mark_bar().encode(
+        x=alt.X("Importance:Q", title="User-specific Importance Score"),
+        y=alt.Y("Feature:N", sort="-x", title=""),
+        tooltip=["Feature", "Importance"]
+    ).properties(height=420)
+
+    st.altair_chart(chart, use_container_width=True)
