@@ -1,8 +1,13 @@
+# ============================================
+# Predictive Maintenance – Streamlit App
+# (Matplotlib-Free Version)
+# ============================================
+
 import streamlit as st
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
+from sklearn.preprocessing import StandardScaler
 
 # ---------------- PAGE CONFIG ----------------
 st.set_page_config(
@@ -14,6 +19,28 @@ st.set_page_config(
 # ---------------- TITLE ----------------
 st.title("🛠️ Predictive Maintenance for Industrial Machinery")
 st.markdown("### Enter Machine Sensor Values")
+
+# ---------------- LOAD & TRAIN MODELS ----------------
+@st.cache_resource
+def train_models():
+    df = pd.read_csv("ai4i2020.csv")
+    df = df.drop(columns=["Product ID", "Type"])
+
+    X = df.drop(columns=["Machine failure"])
+    y = df["Machine failure"]
+
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
+
+    clf = RandomForestClassifier(n_estimators=150, random_state=42)
+    clf.fit(X_scaled, y)
+
+    reg = RandomForestRegressor(n_estimators=150, random_state=42)
+    reg.fit(X, df["Tool wear [min]"])
+
+    return clf, reg, scaler, X.columns
+
+clf, reg, scaler, feature_names = train_models()
 
 # ---------------- INPUT UI ----------------
 col1, col2, col3 = st.columns(3)
@@ -39,42 +66,27 @@ rnf = st.number_input("Random Failure (RNF)", 0.0, 1.0, 0.0)
 # ---------------- BUTTON ----------------
 if st.button("🚀 Predict Machine Health"):
 
-    # -------- FEATURE VECTOR --------
-    X = np.array([[udi, air_temp, process_temp,
-                   rot_speed, torque, tool_wear,
-                   twf, hdf, pwf, osf, rnf]])
+    # -------- INPUT VECTOR --------
+    user_input = np.array([[udi, air_temp, process_temp,
+                            rot_speed, torque, tool_wear,
+                            twf, hdf, pwf, osf, rnf]])
 
-    feature_names = [
-        "UDI", "Air Temp", "Process Temp",
-        "Rot Speed", "Torque", "Tool Wear",
-        "TWF", "HDF", "PWF", "OSF", "RNF"
-    ]
-
-    # -------- MODELS (SAFE DUMMY TRAINING) --------
-    clf = RandomForestClassifier(n_estimators=100, random_state=42)
-    reg = RandomForestRegressor(n_estimators=100, random_state=42)
-
-    X_train = np.random.rand(200, 11)
-    y_class = np.random.randint(0, 2, 200)
-    y_rul = np.random.randint(1000, 10000, 200)
-
-    clf.fit(X_train, y_class)
-    reg.fit(X_train, y_rul)
+    user_scaled = scaler.transform(user_input)
 
     # -------- PREDICTIONS --------
-    probability = clf.predict_proba(X)[0][1] * 100
-    rul_minutes = int(reg.predict(X)[0])
+    failure_prob = clf.predict_proba(user_scaled)[0][1] * 100
+    rul_minutes = int(reg.predict(user_input)[0])
 
-    # -------- RUL CONVERSION --------
+    # -------- RUL FORMAT --------
     days = rul_minutes // (24 * 60)
     hours = (rul_minutes % (24 * 60)) // 60
     minutes = rul_minutes % 60
 
-    # -------- RISK LEVEL LOGIC --------
-    if probability >= 70 or rul_minutes <= 2000:
+    # -------- RISK LOGIC --------
+    if failure_prob >= 70 or rul_minutes <= 2000:
         risk = "HIGH RISK"
         color = "🔴"
-    elif probability >= 30 or rul_minutes <= 5000:
+    elif failure_prob >= 30 or rul_minutes <= 5000:
         risk = "MEDIUM RISK"
         color = "🟠"
     else:
@@ -84,10 +96,11 @@ if st.button("🚀 Predict Machine Health"):
     # ---------------- RESULTS ----------------
     st.divider()
     st.header("🔍 Prediction Results")
+
     st.subheader(f"{color} Machine Status: **{risk}**")
 
     st.header("📌 Failure Probability")
-    st.metric("", f"{probability:.2f} %")
+    st.metric("", f"{failure_prob:.2f} %")
 
     st.header("⏳ Remaining Useful Life (RUL)")
     st.metric("", f"{days} days {hours} hours {minutes} minutes")
@@ -96,16 +109,13 @@ if st.button("🚀 Predict Machine Health"):
     st.divider()
     st.header("📊 Feature Importance (Based on Your Inputs)")
 
-    importances = clf.feature_importances_
+    global_importance = clf.feature_importances_
+    normalized_input = np.abs(user_input[0]) / (np.sum(np.abs(user_input[0])) + 1e-6)
+    user_importance = global_importance * normalized_input
+
     fi_df = pd.DataFrame({
         "Feature": feature_names,
-        "Importance": importances
+        "Importance": user_importance
     }).sort_values(by="Importance", ascending=False)
 
-    fig, ax = plt.subplots(figsize=(8, 4))
-    ax.barh(fi_df["Feature"], fi_df["Importance"])
-    ax.invert_yaxis()
-    ax.set_xlabel("Importance Score")
-    ax.set_title("Feature Importance")
-
-    st.pyplot(fig)
+    st.bar_chart(fi_df.set_index("Feature"))
